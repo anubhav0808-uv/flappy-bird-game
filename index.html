@@ -2,36 +2,38 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="mobile-web-app-capable" content="yes">
 <title>Flappy Bird</title>
 <style>
   * { margin: 0; padding: 0; box-sizing: border-box; }
   html, body {
     width: 100%; height: 100%; overflow: hidden;
-    background: linear-gradient(180deg, #4ec0ca 0%, #4ec0ca 70%, #ded895 70%, #ded895 100%);
+    background: #4ec0ca;
     font-family: 'Arial', sans-serif;
-    display: flex; align-items: center; justify-content: center;
     user-select: none; -webkit-user-select: none;
+    -webkit-tap-highlight-color: transparent;
     touch-action: none;
+    overscroll-behavior: none;
   }
   #gameContainer {
     position: relative;
-    width: 100%; height: 100%;
-    max-width: 480px; max-height: 800px;
-    margin: 0 auto;
+    width: 100vw; height: 100vh;
     overflow: hidden;
-    box-shadow: 0 0 40px rgba(0,0,0,0.3);
   }
-  canvas { display: block; width: 100%; height: 100%; }
+  canvas { display: block; width: 100%; height: 100%; touch-action: none; }
   #muteBtn {
-    position: absolute; top: 10px; right: 10px;
+    position: absolute; top: max(10px, env(safe-area-inset-top)); right: 10px;
     background: rgba(0,0,0,0.4); color: white;
     border: none; border-radius: 50%;
-    width: 40px; height: 40px; font-size: 20px;
+    width: 44px; height: 44px; font-size: 20px;
     cursor: pointer; z-index: 10;
     display: flex; align-items: center; justify-content: center;
+    -webkit-tap-highlight-color: transparent;
   }
-  #muteBtn:hover { background: rgba(0,0,0,0.6); }
+  #muteBtn:active { background: rgba(0,0,0,0.6); transform: scale(0.95); }
 </style>
 </head>
 <body>
@@ -44,22 +46,28 @@
   const canvas = document.getElementById('gameCanvas');
   const ctx = canvas.getContext('2d');
   const muteBtn = document.getElementById('muteBtn');
-  let W = 0, H = 0, scale = 1;
+  let W = 0, H = 0, DPR = 1;
 
   function resize() {
-    const container = document.getElementById('gameContainer');
-    W = container.clientWidth;
-    H = container.clientHeight;
-    canvas.width = W;
-    canvas.height = H;
+    DPR = window.devicePixelRatio || 1;
+    W = window.innerWidth;
+    H = window.innerHeight;
+    canvas.width = W * DPR;
+    canvas.height = H * DPR;
+    canvas.style.width = W + 'px';
+    canvas.style.height = H + 'px';
+    ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
   }
   window.addEventListener('resize', resize);
+  window.addEventListener('orientationchange', () => setTimeout(resize, 100));
   resize();
 
   // --- Audio ---
   let audioCtx = null;
   let muted = false;
-  muteBtn.addEventListener('click', () => {
+  muteBtn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    e.preventDefault();
     muted = !muted;
     muteBtn.textContent = muted ? '🔇' : '🔊';
   });
@@ -111,25 +119,26 @@
     rotation: 0, wingFrame: 0,
     reset() {
       this.x = W * 0.28;
-      this.y = H * 0.45;
+      this.y = H * 0.42;
       this.vy = 0;
       this.rotation = 0;
-      this.radius = Math.min(W, H) * 0.025 + 8;
+      this.radius = Math.max(14, Math.min(W, H) * 0.03);
     }
   };
 
   // --- Pipes ---
   let pipes = [];
-  const pipeWidth = 60;
-  let pipeGap = 160;
+  let pipeWidth = 64;
+  let pipeGap = 170;
   let pipeSpeed = 2.5;
   let spawnInterval = 90;
 
   function getDifficulty() {
     const level = Math.floor(score / 5);
-    pipeGap = Math.max(120, 160 - level * 6);
+    pipeGap = Math.max(130, 170 - level * 5);
     pipeSpeed = 2.5 + level * 0.2;
-    spawnInterval = Math.max(70, 90 - level * 2);
+    spawnInterval = Math.max(72, 90 - level * 2);
+    pipeWidth = Math.max(50, Math.min(80, W * 0.16));
   }
 
   // --- Clouds ---
@@ -139,8 +148,8 @@
     for (let i = 0; i < 5; i++) {
       clouds.push({
         x: Math.random() * W,
-        y: Math.random() * H * 0.4 + 20,
-        size: Math.random() * 30 + 40,
+        y: Math.random() * H * 0.35 + 20,
+        size: Math.random() * 25 + 35,
         speed: Math.random() * 0.3 + 0.1
       });
     }
@@ -148,7 +157,7 @@
 
   // --- Ground ---
   let groundOffset = 0;
-  const groundHeight = 80;
+  let groundHeight = 0;
 
   // --- Particles ---
   let particles = [];
@@ -205,7 +214,31 @@
     }
   }
 
-  // Keyboard controls: Enter to start/restart, Space to fly
+  function tap(e) {
+    if (e) e.preventDefault();
+    if (audioCtx && audioCtx.state === 'suspended') audioCtx.resume();
+    if (!audioCtx) {
+      try { audioCtx = new (window.AudioContext || window.webkitAudioContext)(); }
+      catch(e) {}
+    }
+    if (state === STATE.READY) {
+      startGame();
+    } else if (state === STATE.PLAYING) {
+      flap();
+    }
+  }
+
+  // Touch / click on canvas (but not on mute button)
+  canvas.addEventListener('touchstart', (e) => {
+    e.preventDefault();
+    tap(e);
+  }, { passive: false });
+
+  canvas.addEventListener('mousedown', (e) => {
+    tap(e);
+  });
+
+  // Keyboard: Enter to start/restart, Space to fly (desktop)
   document.addEventListener('keydown', (e) => {
     if (audioCtx && audioCtx.state === 'suspended') audioCtx.resume();
     if (e.code === 'Enter') {
@@ -258,13 +291,14 @@
   // --- Update ---
   function update() {
     frame++;
+    groundHeight = Math.max(60, H * 0.12);
     getDifficulty();
 
     for (const c of clouds) {
       c.x -= c.speed;
       if (c.x + c.size < 0) {
         c.x = W + Math.random() * 100;
-        c.y = Math.random() * H * 0.4 + 20;
+        c.y = Math.random() * H * 0.35 + 20;
       }
     }
 
@@ -273,7 +307,7 @@
     }
 
     if (state === STATE.READY) {
-      bird.y = H * 0.45 + Math.sin(frame * 0.08) * 12;
+      bird.y = H * 0.42 + Math.sin(frame * 0.08) * 12;
       bird.wingFrame = (bird.wingFrame + 0.2) % 3;
       bird.rotation = Math.sin(frame * 0.08) * 0.1;
       return;
@@ -306,13 +340,15 @@
     bird.wingFrame = (bird.wingFrame + 0.3) % 3;
 
     if (frame % spawnInterval === 0) {
-      const minGapY = 60;
-      const maxGapY = H - groundHeight - pipeGap - 60;
-      pipes.push({
-        x: W + 10,
-        gapY: Math.random() * (maxGapY - minGapY) + minGapY,
-        scored: false
-      });
+      const minGapY = 50;
+      const maxGapY = H - groundHeight - pipeGap - 50;
+      if (maxGapY > minGapY) {
+        pipes.push({
+          x: W + 10,
+          gapY: Math.random() * (maxGapY - minGapY) + minGapY,
+          scored: false
+        });
+      }
     }
 
     for (let i = pipes.length - 1; i >= 0; i--) {
@@ -457,49 +493,59 @@
 
   function drawScore() {
     ctx.save();
-    ctx.font = 'bold 48px Arial';
+    const fs = Math.max(36, Math.min(56, H * 0.07));
+    ctx.font = 'bold ' + fs + 'px Arial';
     ctx.textAlign = 'center';
     ctx.textBaseline = 'top';
     ctx.strokeStyle = '#000';
     ctx.lineWidth = 4;
     ctx.fillStyle = '#fff';
-    ctx.strokeText(score, W / 2, 30);
-    ctx.fillText(score, W / 2, 30);
+    ctx.strokeText(score, W / 2, 40);
+    ctx.fillText(score, W / 2, 40);
     ctx.restore();
   }
 
   function drawReadyScreen() {
     ctx.save();
-    ctx.font = 'bold 42px Arial';
+    const ts = Math.max(28, Math.min(44, W * 0.1));
+    ctx.font = 'bold ' + ts + 'px Arial';
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
     ctx.strokeStyle = '#000';
     ctx.lineWidth = 5;
     ctx.fillStyle = '#ffeb3b';
-    ctx.strokeText('Flappy Bird', W / 2, H * 0.25);
-    ctx.fillText('Flappy Bird', W / 2, H * 0.25);
+    ctx.strokeText('Flappy Bird', W / 2, H * 0.22);
+    ctx.fillText('Flappy Bird', W / 2, H * 0.22);
 
-    ctx.font = 'bold 20px Arial';
+    const is = Math.max(16, Math.min(22, W * 0.05));
+    ctx.font = 'bold ' + is + 'px Arial';
     ctx.fillStyle = '#fff';
     ctx.lineWidth = 3;
-    ctx.strokeText('Press SPACE to Fly', W / 2, H * 0.35);
-    ctx.fillText('Press SPACE to Fly', W / 2, H * 0.35);
+    ctx.strokeText('Tap to Fly', W / 2, H * 0.33);
+    ctx.fillText('Tap to Fly', W / 2, H * 0.33);
 
     if (highScore > 0) {
-      ctx.font = 'bold 18px Arial';
+      const hs = Math.max(14, Math.min(18, W * 0.04));
+      ctx.font = 'bold ' + hs + 'px Arial';
       ctx.fillStyle = '#ffd700';
-      ctx.strokeText('Best: ' + highScore, W / 2, H * 0.5);
-      ctx.fillText('Best: ' + highScore, W / 2, H * 0.5);
+      ctx.strokeText('Best: ' + highScore, W / 2, H * 0.42);
+      ctx.fillText('Best: ' + highScore, W / 2, H * 0.42);
     }
 
     const pulse = 0.85 + Math.sin(frame * 0.1) * 0.15;
     ctx.globalAlpha = pulse;
-    ctx.font = 'bold 24px Arial';
+    const ss = Math.max(18, Math.min(26, W * 0.06));
+    ctx.font = 'bold ' + ss + 'px Arial';
     ctx.fillStyle = '#fff';
     ctx.strokeStyle = '#000';
     ctx.lineWidth = 4;
-    ctx.strokeText('Press ENTER to Start', W / 2, H * 0.62);
-    ctx.fillText('Press ENTER to Start', W / 2, H * 0.62);
+    ctx.strokeText('Tap to Start', W / 2, H * 0.6);
+    ctx.fillText('Tap to Start', W / 2, H * 0.6);
+
+    // Hand tap icon
+    ctx.globalAlpha = pulse * 0.8;
+    ctx.font = 'bold ' + (ss + 6) + 'px Arial';
+    ctx.fillText('👆', W / 2, H * 0.7);
     ctx.restore();
   }
 
@@ -508,7 +554,7 @@
     ctx.fillStyle = 'rgba(0,0,0,0.3)';
     ctx.fillRect(0, 0, W, H);
 
-    const pw = W * 0.7, ph = 200;
+    const pw = Math.min(W * 0.8, 340), ph = 220;
     const px = (W - pw) / 2, py = H * 0.28;
     ctx.fillStyle = '#fff';
     ctx.strokeStyle = '#5a9a3a';
@@ -523,32 +569,29 @@
 
     ctx.font = 'bold 22px Arial';
     ctx.fillStyle = '#333';
-    ctx.fillText('Score: ' + score, W / 2, py + 60);
+    ctx.fillText('Score: ' + score, W / 2, py + 55);
     ctx.fillStyle = '#ffd700';
-    ctx.fillText('Best: ' + highScore, W / 2, py + 90);
+    ctx.fillText('Best: ' + highScore, W / 2, py + 85);
 
     if (score === highScore && score > 0) {
       ctx.font = 'bold 16px Arial';
       ctx.fillStyle = '#e74c3c';
-      ctx.fillText('★ New Best! ★', W / 2, py + 120);
+      ctx.fillText('★ New Best! ★', W / 2, py + 115);
     }
 
-    ctx.font = 'bold 18px Arial';
-    ctx.fillStyle = '#333';
-    ctx.fillText('Press ENTER or click Play Again', W / 2, py + 145);
-
-    const bw = pw * 0.6, bh = 44;
-    const bx = (W - bw) / 2, by = py + ph - 60;
+    const bw = pw * 0.7, bh = 48;
+    const bx = (W - bw) / 2, by = py + ph - 65;
     const btnGrad = ctx.createLinearGradient(bx, by, bx, by + bh);
     btnGrad.addColorStop(0, '#73c043');
     btnGrad.addColorStop(1, '#5a9a3a');
     ctx.fillStyle = btnGrad;
-    roundRect(bx, by, bw, bh, 8, true, false);
+    roundRect(bx, by, bw, bh, 10, true, false);
 
     ctx.font = 'bold 20px Arial';
     ctx.fillStyle = '#fff';
     ctx.textBaseline = 'middle';
-    ctx.fillText('Play Again', W / 2, by + bh / 2);
+    ctx.fillText('Tap to Play Again', W / 2, by + bh / 2);
+
     ctx.restore();
   }
 
@@ -568,35 +611,14 @@
     if (stroke) ctx.stroke();
   }
 
-  // Click on Play Again button
-  canvas.addEventListener('click', (e) => {
-    if (state !== STATE.GAME_OVER) return;
-    const rect = canvas.getBoundingClientRect();
-    const cx = (e.clientX - rect.left) * (canvas.width / rect.width);
-    const cy = (e.clientY - rect.top) * (canvas.height / rect.height);
-    const pw = W * 0.7, ph = 200;
-    const py = H * 0.28;
-    const bw = pw * 0.6, bh = 44;
-    const bx = (W - bw) / 2, by = py + ph - 60;
-    if (cx >= bx && cx <= bx + bw && cy >= by && cy <= by + bh) {
-      resetGame();
-    }
-  });
-  canvas.addEventListener('touchend', (e) => {
-    if (state !== STATE.GAME_OVER) return;
-    const t = e.changedTouches[0];
-    const rect = canvas.getBoundingClientRect();
-    const cx = (t.clientX - rect.left) * (canvas.width / rect.width);
-    const cy = (t.clientY - rect.top) * (canvas.height / rect.height);
-    const pw = W * 0.7, ph = 200;
-    const py = H * 0.28;
-    const bw = pw * 0.6, bh = 44;
-    const bx = (W - bw) / 2, by = py + ph - 60;
-    if (cx >= bx && cx <= bx + bw && cy >= by && cy <= by + bh) {
+  // Tap on game over screen to restart
+  canvas.addEventListener('touchstart', (e) => {
+    if (state === STATE.GAME_OVER) {
       e.preventDefault();
+      if (audioCtx && audioCtx.state === 'suspended') audioCtx.resume();
       resetGame();
     }
-  });
+  }, { passive: false });
 
   // --- Render ---
   function render() {
@@ -639,16 +661,14 @@
   }
 
   // --- Game Loop ---
-  let lastTime = 0;
-  function loop(timestamp) {
-    const dt = timestamp - lastTime;
-    lastTime = timestamp;
+  function loop() {
     update();
     render();
     requestAnimationFrame(loop);
   }
 
   // Init
+  groundHeight = Math.max(60, H * 0.12);
   initClouds();
   bird.reset();
   getDifficulty();
